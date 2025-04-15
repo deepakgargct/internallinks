@@ -1,5 +1,6 @@
 import streamlit as st
 import spacy
+import subprocess
 from bs4 import BeautifulSoup
 import re
 import pandas as pd
@@ -7,7 +8,12 @@ import pandas as pd
 st.set_page_config(page_title="Internal Link Suggester", layout="wide")
 st.title("🔗 Smart Internal Link Suggester")
 
-nlp = spacy.load("en_core_web_sm")
+# Attempt to load spaCy model, install if not available
+try:
+    nlp = spacy.load("en_core_web_sm")
+except OSError:
+    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
+    nlp = spacy.load("en_core_web_sm")
 
 def clean_html(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -18,9 +24,11 @@ def clean_html(html_content):
 def extract_keywords(text):
     doc = nlp(text)
     keywords = set()
+
     for chunk in doc.noun_chunks:
         if len(chunk.text) > 2 and not chunk.text.lower() in ["this", "that", "those", "these"]:
             keywords.add(chunk.text.lower())
+
     return list(keywords)
 
 def is_already_linked(keyword, soup):
