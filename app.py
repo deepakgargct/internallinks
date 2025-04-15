@@ -1,6 +1,7 @@
 import streamlit as st
 import spacy
 import subprocess
+from spacy.cli import download
 from bs4 import BeautifulSoup
 import re
 import pandas as pd
@@ -12,7 +13,9 @@ st.title("🔗 Smart Internal Link Suggester")
 try:
     nlp = spacy.load("en_core_web_sm")
 except OSError:
-    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
+    # Download the model if it's missing
+    st.write("🚧 SpaCy model not found. Downloading `en_core_web_sm`...")
+    download("en_core_web_sm")
     nlp = spacy.load("en_core_web_sm")
 
 def clean_html(html_content):
