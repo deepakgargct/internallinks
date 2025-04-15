@@ -5,18 +5,24 @@ from spacy.cli import download
 from bs4 import BeautifulSoup
 import re
 import pandas as pd
+import os
 
 st.set_page_config(page_title="Internal Link Suggester", layout="wide")
 st.title("🔗 Smart Internal Link Suggester")
 
-# Attempt to load spaCy model, install if not available
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    # Download the model if it's missing
-    st.write("🚧 SpaCy model not found. Downloading `en_core_web_sm`...")
-    download("en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm")
+# Function to ensure model is installed before loading
+def install_spacy_model():
+    try:
+        spacy.load("en_core_web_sm")
+    except OSError:
+        st.write("🚧 SpaCy model not found. Installing `en_core_web_sm`...")
+        subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"], check=True)
+
+# Ensure the model is available
+install_spacy_model()
+
+# Load the model after installation
+nlp = spacy.load("en_core_web_sm")
 
 def clean_html(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
