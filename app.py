@@ -1,28 +1,12 @@
 import streamlit as st
-import spacy
-import subprocess
-from spacy.cli import download
 from bs4 import BeautifulSoup
 import re
 import pandas as pd
-import os
+from collections import Counter
+import itertools
 
 st.set_page_config(page_title="Internal Link Suggester", layout="wide")
-st.title("🔗 Smart Internal Link Suggester")
-
-# Function to ensure model is installed before loading
-def install_spacy_model():
-    try:
-        spacy.load("en_core_web_sm")
-    except OSError:
-        st.write("🚧 SpaCy model not found. Installing `en_core_web_sm`...")
-        subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"], check=True)
-
-# Ensure the model is available
-install_spacy_model()
-
-# Load the model after installation
-nlp = spacy.load("en_core_web_sm")
+st.title("🔗 Smart Internal Link Suggester (No spaCy)")
 
 def clean_html(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -30,15 +14,11 @@ def clean_html(html_content):
         tag.decompose()
     return soup.get_text(separator=' ', strip=True), soup
 
-def extract_keywords(text):
-    doc = nlp(text)
-    keywords = set()
-
-    for chunk in doc.noun_chunks:
-        if len(chunk.text) > 2 and not chunk.text.lower() in ["this", "that", "those", "these"]:
-            keywords.add(chunk.text.lower())
-
-    return list(keywords)
+def extract_keywords(text, min_word_len=4, min_freq=2):
+    words = re.findall(r'\b[a-zA-Z]{%d,}\b' % min_word_len, text.lower())
+    freq = Counter(words)
+    keywords = [word for word, count in freq.items() if count >= min_freq]
+    return keywords
 
 def is_already_linked(keyword, soup):
     for a in soup.find_all('a', href=True):
@@ -79,16 +59,16 @@ if uploaded_files:
     st.subheader("🔍 Suggested Internal Linking Opportunities")
     all_matches = []
 
-    for page, keywords in all_keywords.items():
-        soup = page_soups[page]
-        text = page_texts[page]
+    for source_page, keywords in all_keywords.items():
+        soup = page_soups[source_page]
+        text = page_texts[source_page]
 
         for keyword in keywords:
             if is_already_linked(keyword, soup):
                 continue
 
             for target_page, target_text in page_texts.items():
-                if target_page == page:
+                if target_page == source_page:
                     continue
 
                 if re.search(rf'\b{re.escape(keyword)}\b', target_text, re.IGNORECASE):
@@ -96,7 +76,7 @@ if uploaded_files:
                     if snippet:
                         all_matches.append({
                             "Anchor Text": keyword,
-                            "Source Page": page,
+                            "Source Page": source_page,
                             "Target Page": target_page,
                             "Context Snippet": snippet,
                             "Suggested HTML": generate_anchor_html(keyword, target_page)
