@@ -1,107 +1,109 @@
 import streamlit as st
 import requests
-from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
-import re
+from urllib.parse import urljoin, urlparse
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import pandas as pd
+import re
 
-st.set_page_config(page_title="Semantic Internal Linking Tool", layout="wide")
-st.title("🔗 Internal Linking Suggestions (Semantic + Keyword Matching)")
+# ----------------- Utility Functions -------------------
 
-# --- Step 1: Input Section ---
-site_url = st.text_input("🌐 Root Domain (e.g., https://example.com)", "https://example.com")
-target_url = st.text_input("🎯 Target Page URL", "https://example.com/contact-lens-hygiene-guide")
-keyword = st.text_input("🔑 Target Keyword or Anchor Text", "contact lenses")
-
-if st.button("🚀 Find Internal Linking Opportunities"):
-    
-    def get_internal_links(root_url):
-        visited = set()
-        to_visit = [root_url]
-        internal_links = set()
-
-        while to_visit:
-            url = to_visit.pop()
-            if url in visited or target_url in url:
-                continue
-            visited.add(url)
-
-            try:
-                response = requests.get(url, timeout=5)
-                if not response.ok:
-                    continue
-
-                soup = BeautifulSoup(response.text, 'html.parser')
-                for a in soup.find_all('a', href=True):
-                    link = urljoin(url, a['href'])
-                    if link.startswith(root_url) and '#' not in link:
-                        parsed_link = link.split('?')[0].rstrip('/')
-                        if parsed_link not in visited:
-                            to_visit.append(parsed_link)
-                            internal_links.add(parsed_link)
-            except:
-                continue
-
-        return list(internal_links)
-
-    def get_clean_text(url):
-        try:
-            response = requests.get(url, timeout=10)
-            soup = BeautifulSoup(response.text, "html.parser")
-            for tag in soup(['script', 'style', 'noscript', 'header', 'footer', 'nav', 'form']):
-                tag.decompose()
-            return soup.get_text(separator=" ", strip=True)
-        except:
+def get_clean_text(url):
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
             return ""
+        soup = BeautifulSoup(response.text, "html.parser")
+        for tag in soup(['script', 'style', 'noscript', 'header', 'footer', 'nav', 'form']):
+            tag.decompose()
+        return soup.get_text(separator=" ", strip=True)
+    except Exception as e:
+        print(f"Failed to fetch {url}: {e}")
+        return ""
 
-    # Step 2: Crawl and Fetch Content
-    st.info("🔍 Crawling website for internal URLs...")
-    internal_urls = get_internal_links(site_url)
-    st.success(f"Found {len(internal_urls)} internal URLs.")
+def get_internal_links(site_url):
+    visited = set()
+    to_visit = [site_url]
+    internal_links = set()
+    domain = urlparse(site_url).netloc
 
-    all_texts = {}
-    for url in internal_urls:
-        text = get_clean_text(url)
-        if len(text) > 200:
-            all_texts[url] = text
-
-    st.info("📄 Fetching and cleaning content from internal pages...")
-
-    # Step 3: Get target page content
-    target_text = get_clean_text(target_url)
-    if len(target_text) < 200:
-        st.error("Target page content is too short or not accessible.")
-        st.stop()
-
-    # Step 4: Vectorize and Compare with TF-IDF
-    corpus = [target_text] + list(all_texts.values())
-    vectorizer = TfidfVectorizer(stop_words='english')
-    tfidf_matrix = vectorizer.fit_transform(corpus)
-
-    similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])[0]
-
-    # Step 5: Filter and Build Results
-    threshold = 0.65
-    matched_pages = []
-
-    for i, (url, sim_score) in enumerate(zip(all_texts.keys(), similarities)):
-        page_text = all_texts[url]
-        if sim_score >= threshold and re.search(rf"\b{re.escape(keyword)}\b", page_text, re.IGNORECASE):
-            snippet_match = re.search(rf"(.{0,50}{keyword}.{0,50})", page_text, re.IGNORECASE)
-            snippet = snippet_match.group(0).strip() if snippet_match else "..."
-            matched_pages.append({
-                "Source Page": url,
-                "Similarity Score": round(sim_score, 3),
-                "Keyword Found In Snippet": snippet
+    while to_visit:
+        current_url = to_visit.pop()
+        if current_url in visited or urlparse(current_url).netloc != domain:
+            continue
+        visited.add(current_url)
+        try:
+            response = requests.get(current_url, timeout=10, headers={
+                "User-Agent": "Mozilla/5.0"
             })
+            if response.status_code != 200:
+                continue
+            soup = BeautifulSoup(response.text, 'html.parser')
+            for link in soup.find_all('a', href=True):
+                href = urljoin(current_url, link['href'])
+                if domain in urlparse(href).netloc and href not in visited:
+                    internal_links.add(href)
+                    to_visit.append(href)
+        except Exception as e:
+            print(f"Error crawling {current_url}: {e}")
+            continue
+    return list(internal_links)
 
-    # Step 6: Display
-    if matched_pages:
-        df = pd.DataFrame(sorted(matched_pages, key=lambda x: x["Similarity Score"], reverse=True))
-        st.subheader("📈 Ranked Internal Linking Suggestions")
-        st.dataframe(df)
-        st.download_button("📥 Download CSV", df.to_csv(index=False).encode("utf-8"), file_name="internal_link_opportunities.csv")
+def find_internal_link_opportunities(site_url, target_url, keyword, threshold=0.65):
+    pages = get_internal_links(site_url)
+    pages = [url for url in pages if url != target_url]
+
+    target_text = get_clean_text(target_url)
+    if not target_text:
+        st.error("Failed to fetch content from the target URL.")
+        return []
+
+    candidates = []
+    texts = []
+
+    for page in pages:
+        text = get_clean_text(page)
+        if keyword.lower() in text.lower() and len(text) > 100:
+            candidates.append(page)
+            texts.append(text)
+
+    if not texts:
+        return []
+
+    all_texts = [target_text] + texts
+    vectorizer = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = vectorizer.fit_transform(all_texts)
+
+    similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
+    ranked = [(candidates[i], similarities[i]) for i in range(len(candidates))]
+    ranked = sorted(ranked, key=lambda x: x[1], reverse=True)
+    return [(url, score) for url, score in ranked if score > threshold]
+
+# ------------------ Streamlit App -----------------------
+
+st.title("🔗 Internal Linking Opportunities Finder")
+
+site_url = st.text_input("Website URL (e.g. https://example.com)")
+target_url = st.text_input("Target Page URL (e.g. https://example.com/contact-lens-hygiene-guide)")
+keyword = st.text_input("Target Keyword (e.g. contact lenses)")
+
+if st.button("Find Internal Links"):
+    if not site_url or not target_url or not keyword:
+        st.warning("Please fill in all fields.")
     else:
-        st.warning("No strong internal linking opportunities found. Try lowering the threshold or checking site accessibility.")
+        with st.spinner("Crawling site and analyzing pages..."):
+            links = find_internal_link_opportunities(site_url, target_url, keyword)
+        
+        if links:
+            st.success(f"Found {len(links)} internal linking opportunities.")
+            for url, score in links:
+                st.markdown(f"- [{url}]({url}) — Similarity Score: `{score:.2f}`")
+        else:
+            st.info("No relevant internal linking opportunities found.")
