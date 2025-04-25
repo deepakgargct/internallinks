@@ -1,12 +1,11 @@
 import streamlit as st
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import re
-
-# ----------------- Utility Functions -------------------
+import io
 
 def get_clean_text(url):
     headers = {
@@ -28,39 +27,10 @@ def get_clean_text(url):
         print(f"Failed to fetch {url}: {e}")
         return ""
 
-def get_internal_links(site_url):
-    visited = set()
-    to_visit = [site_url]
-    internal_links = set()
-    domain = urlparse(site_url).netloc
-
-    while to_visit:
-        current_url = to_visit.pop()
-        if current_url in visited or urlparse(current_url).netloc != domain:
-            continue
-        visited.add(current_url)
-        try:
-            response = requests.get(current_url, timeout=10, headers={
-                "User-Agent": "Mozilla/5.0"
-            })
-            if response.status_code != 200:
-                continue
-            soup = BeautifulSoup(response.text, 'html.parser')
-            for link in soup.find_all('a', href=True):
-                href = urljoin(current_url, link['href'])
-                if domain in urlparse(href).netloc and href not in visited:
-                    internal_links.add(href)
-                    to_visit.append(href)
-        except Exception as e:
-            print(f"Error crawling {current_url}: {e}")
-            continue
-    return list(internal_links)
-
-def find_internal_link_opportunities(site_url, target_url, keyword, threshold=0.65):
-    pages = get_internal_links(site_url)
-    pages = [url for url in pages if url != target_url]
-
+def find_internal_link_opportunities(url_list, target_url, keyword, threshold=0.65):
+    url_list = [url for url in url_list if url != target_url]
     target_text = get_clean_text(target_url)
+
     if not target_text:
         st.error("Failed to fetch content from the target URL.")
         return []
@@ -68,10 +38,10 @@ def find_internal_link_opportunities(site_url, target_url, keyword, threshold=0.
     candidates = []
     texts = []
 
-    for page in pages:
-        text = get_clean_text(page)
+    for url in url_list:
+        text = get_clean_text(url)
         if keyword.lower() in text.lower() and len(text) > 100:
-            candidates.append(page)
+            candidates.append(url)
             texts.append(text)
 
     if not texts:
@@ -86,24 +56,40 @@ def find_internal_link_opportunities(site_url, target_url, keyword, threshold=0.
     ranked = sorted(ranked, key=lambda x: x[1], reverse=True)
     return [(url, score) for url, score in ranked if score > threshold]
 
-# ------------------ Streamlit App -----------------------
+# ---------------- Streamlit App ----------------------
 
-st.title("🔗 Internal Linking Opportunities Finder")
+st.title("🔗 Internal Linking Opportunities Finder (Upload Version)")
 
-site_url = st.text_input("Website URL (e.g. https://example.com)")
-target_url = st.text_input("Target Page URL (e.g. https://example.com/contact-lens-hygiene-guide)")
-keyword = st.text_input("Target Keyword (e.g. contact lenses)")
+uploaded_file = st.file_uploader("Upload CSV or Excel file with a column named 'url'", type=["csv", "xlsx"])
+target_url = st.text_input("Enter the Target URL (e.g. https://example.com/guide)")
+keyword = st.text_input("Enter the Seed Keyword (e.g. contact lenses)")
 
-if st.button("Find Internal Links"):
-    if not site_url or not target_url or not keyword:
-        st.warning("Please fill in all fields.")
-    else:
-        with st.spinner("Crawling site and analyzing pages..."):
-            links = find_internal_link_opportunities(site_url, target_url, keyword)
-        
-        if links:
-            st.success(f"Found {len(links)} internal linking opportunities.")
-            for url, score in links:
-                st.markdown(f"- [{url}]({url}) — Similarity Score: `{score:.2f}`")
+if uploaded_file and target_url and keyword:
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
         else:
-            st.info("No relevant internal linking opportunities found.")
+            df = pd.read_excel(uploaded_file)
+
+        if 'url' not in df.columns:
+            st.error("File must contain a column named 'url'")
+        else:
+            url_list = df['url'].dropna().unique().tolist()
+            with st.spinner("Analyzing internal pages..."):
+                results = find_internal_link_opportunities(url_list, target_url, keyword)
+
+            if results:
+                st.success(f"Found {len(results)} internal linking opportunities.")
+                result_df = pd.DataFrame(results, columns=["URL", "Similarity Score"])
+                st.dataframe(result_df)
+
+                # Download button
+                csv_buffer = io.StringIO()
+                result_df.to_csv(csv_buffer, index=False)
+                st.download_button("Download Results as CSV", csv_buffer.getvalue(), "internal_links.csv", "text/csv")
+            else:
+                st.info("No relevant internal linking opportunities found.")
+    except Exception as e:
+        st.error(f"Something went wrong: {e}")
+else:
+    st.info("Please upload a file and fill in all fields.")
