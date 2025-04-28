@@ -2,4 +2,5 @@ streamlit
 pandas
 beautifulsoup4
 scikit-learn
-httpx
+requests
+openpyxl
