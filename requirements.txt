@@ -1,6 +1,7 @@
 streamlit
-pandas
-requests
-beautifulsoup4
+httpx
+selectolax
 scikit-learn
+pandas
 openpyxl
+tqdm
