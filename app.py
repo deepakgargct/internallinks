@@ -6,7 +6,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from urllib.parse import urlparse
 import re
-from tqdm import tqdm
+import asyncio
 
 # Function to fetch page content
 async def fetch_content(url):
@@ -60,8 +60,6 @@ if uploaded_file and target_url and seed_keyword:
 
     st.write(f"✅ {len(urls)} URLs loaded.")
 
-    import asyncio
-
     async def process_urls():
         target_html = await fetch_content(target_url)
         if not target_html:
@@ -73,7 +71,7 @@ if uploaded_file and target_url and seed_keyword:
         pages_data = []
         texts = []
 
-        for url in tqdm(urls):
+        for url in urls:
             if url == target_url:
                 continue
             page_html = await fetch_content(url)
@@ -120,6 +118,15 @@ if uploaded_file and target_url and seed_keyword:
             output_df = pd.DataFrame(results)
             st.dataframe(output_df)
 
+            # 🛠 Corrected download_button with proper parenthesis
+            csv = output_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Results as CSV",
-                data=output_df.to_csv(index=False),
+                data=csv,
+                file_name="internal_link_suggestions.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("⚡ No strong matches found for internal linking.")
+
+    asyncio.run(process_urls())
