@@ -1,7 +1,5 @@
 streamlit
-httpx
-selectolax
-scikit-learn
 pandas
-openpyxl
-tqdm
+beautifulsoup4
+scikit-learn
+httpx
