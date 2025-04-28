@@ -1,6 +1,6 @@
 streamlit
 pandas
 beautifulsoup4
+lxml
 scikit-learn
-requests
-openpyxl
+playwright
