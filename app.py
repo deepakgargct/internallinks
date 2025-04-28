@@ -7,9 +7,12 @@ import pandas as pd
 import re
 from collections import defaultdict
 
-# Function to fetch the content of the page
+# Function to fetch the content of the page with a User-Agent header
 async def fetch_page_content(url):
-    async with aiohttp.ClientSession() as session:
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    async with aiohttp.ClientSession(headers=headers) as session:
         async with session.get(url) as response:
             if response.status == 200:
                 html = await response.text()
