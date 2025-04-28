@@ -1,134 +1,116 @@
-from requests_html import AsyncHTMLSession
 import streamlit as st
 import pandas as pd
-import re
-from bs4 import BeautifulSoup
+import httpx
+from selectolax.parser import HTMLParser
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import tempfile
-import time
-import asyncio
+import re
 
-# ========== Helper Functions ==========
+st.set_page_config(page_title="Internal Linking Finder", layout="wide")
+st.title("🔗 Internal Linking Opportunity Finder")
 
-async def fetch_page_content(url):
-    session = AsyncHTMLSession()
+# Helper: Fetch page content
+def fetch_page_content(url):
     try:
-        response = await session.get(url)
-        await response.html.arender(timeout=20, sleep=2)
-        content = response.html.html
+        response = httpx.get(url, timeout=20)
+        response.raise_for_status()
+        return response.text
     except Exception as e:
-        print(f"Failed to load {url}: {e}")
-        content = ""
-    await session.close()
-    return content
+        st.error(f"Failed to fetch {url}: {e}")
+        return None
 
-def extract_clean_content(html_content):
-    soup = BeautifulSoup(html_content, 'html.parser')
+# Helper: Extract clean text (body only, skip header/footer/h1-h6)
+def extract_main_content(html_content):
+    tree = HTMLParser(html_content)
+    
+    # Remove header, footer, nav, and sidebars
+    for selector in ['header', 'footer', 'nav', 'aside']:
+        for node in tree.css(selector):
+            node.decompose()
 
-    for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'form']):
-        tag.decompose()
-    for div in soup.find_all('div', class_=re.compile(r"breadcrumb", re.I)):
-        div.decompose()
-    for tag in soup.find_all(re.compile('^h[1-6]$')):
-        tag.decompose()
+    # Remove all H1-H6 tags
+    for i in range(1, 7):
+        for node in tree.css(f'h{i}'):
+            node.decompose()
+    
+    # Get body text
+    body = tree.css_first('body')
+    if body:
+        text = body.text(separator=' ').strip()
+        return re.sub(r'\s+', ' ', text)  # Clean multiple spaces
+    else:
+        return ""
 
-    paragraphs = soup.find_all('p')
-    text = ' '.join(p.get_text(separator=' ', strip=True) for p in paragraphs)
+# Helper: Find anchor opportunities
+def find_anchor_opportunities(page_text, seed_keyword):
+    # Split content into sentences
+    sentences = re.split(r'(?<=[.!?])\s+', page_text)
+    
+    # Find sentences containing the seed keyword
+    suggestions = []
+    for sent in sentences:
+        if seed_keyword.lower() in sent.lower():
+            highlighted = sent.replace(seed_keyword, f"**{seed_keyword}**")
+            suggestions.append((sent, highlighted))
+    return suggestions
 
-    return text.strip()
+# Upload file
+uploaded_file = st.file_uploader("Upload your CSV or Excel file containing URLs:", type=["csv", "xlsx"])
 
-def highlight_anchor(text, keyword, target_url):
-    pattern = re.compile(rf"(.{{0,50}})({re.escape(keyword)})(.{{0,50}})", re.IGNORECASE)
-    matches = pattern.findall(text)
-    highlighted = []
-    for before, match, after in matches:
-        context = f"...{before}**[{match}]({target_url})**{after}..."
-        highlighted.append(context)
-    return highlighted
-
-# ========== Streamlit UI ==========
-
-st.set_page_config(page_title="Internal Linking Opportunity Finder", layout="wide")
-st.title("Internal Linking Opportunity Finder")
-
-uploaded_file = st.file_uploader("Upload a CSV or Excel file containing Page URLs", type=["csv", "xlsx"])
-target_url = st.text_input("Enter the Target Page URL (where you want to build links):")
-seed_keyword = st.text_input("Enter the Seed Keyword/Anchor Text:")
-
-if uploaded_file and target_url and seed_keyword:
-    if uploaded_file.name.endswith('.csv'):
+if uploaded_file:
+    if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
+    
+    st.success("File uploaded successfully!")
 
-    if 'URL' not in df.columns:
-        st.error("Uploaded file must contain a 'URL' column!")
-    else:
-        urls = df['URL'].dropna().tolist()
+    url_column = st.selectbox("Select the column that contains URLs:", df.columns.tolist())
+    target_url = st.text_input("Enter the Target URL:")
+    seed_keyword = st.text_input("Enter the Seed Keyword:")
 
-        st.info(f"Found {len(urls)} pages to process.")
-
+    if st.button("Find Internal Linking Opportunities"):
         progress = st.progress(0)
-        page_contents = {}
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        results = []
+
+        urls = df[url_column].dropna().unique().tolist()
+        
+        # Fetch target URL content separately to avoid self-linking
+        target_page_html = fetch_page_content(target_url)
+        target_page_text = extract_main_content(target_page_html) if target_page_html else ""
 
         for idx, url in enumerate(urls):
-            content = loop.run_until_complete(fetch_page_content(url))
-            cleaned = extract_clean_content(content)
-            page_contents[url] = cleaned
             progress.progress((idx + 1) / len(urls))
-            time.sleep(0.2)
+            if url.strip() == target_url.strip():
+                continue  # Skip the target page itself
+            
+            html = fetch_page_content(url)
+            if not html:
+                continue
+            page_text = extract_main_content(html)
 
-        # Fetch and clean target URL content
-        st.info("Fetching target page content...")
-        target_content_html = loop.run_until_complete(fetch_page_content(target_url))
-        target_content = extract_clean_content(target_content_html)
+            # Skip if no body text
+            if not page_text:
+                continue
 
-        if not target_content:
-            st.error("Failed to fetch target URL content.")
+            # Find opportunities
+            suggestions = find_anchor_opportunities(page_text, seed_keyword)
+            for original, highlighted in suggestions:
+                results.append({
+                    "Source URL": url,
+                    "Suggested Sentence": highlighted,
+                    "Anchor Text": seed_keyword,
+                    "Target Link": target_url
+                })
+
+        if results:
+            result_df = pd.DataFrame(results)
+            st.success(f"Found {len(results)} internal link opportunities!")
+            st.dataframe(result_df)
+
+            # Download
+            csv = result_df.to_csv(index=False)
+            st.download_button("Download Results as CSV", csv, "internal_links.csv", "text/csv")
         else:
-            st.success("Fetched all pages successfully!")
+            st.warning("No internal linking opportunities found.")
 
-            st.info("Calculating semantic similarity...")
-            pages_text = list(page_contents.values())
-            all_texts = [target_content] + pages_text
-            vectorizer = TfidfVectorizer().fit(all_texts)
-            vectors = vectorizer.transform(all_texts)
-
-            target_vec = vectors[0]
-            page_vecs = vectors[1:]
-            similarities = cosine_similarity(target_vec, page_vecs).flatten()
-
-            results = []
-
-            for url, text, score in zip(urls, pages_text, similarities):
-                if score > 0.65 and re.search(seed_keyword, text, re.IGNORECASE):
-                    # Avoid suggesting links if already present
-                    if re.search(rf'href=["\'].*?{re.escape(target_url)}.*?["\']', text):
-                        continue
-
-                    anchors = highlight_anchor(text, seed_keyword, target_url)
-                    if anchors:
-                        results.append({
-                            'Page URL': url,
-                            'Similarity Score': round(score, 2),
-                            'Suggested Placement (Context)': " | ".join(anchors)
-                        })
-
-            if not results:
-                st.warning("No valid internal linking opportunities found!")
-            else:
-                output_df = pd.DataFrame(results)
-                st.dataframe(output_df)
-
-                tmp_download = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-                output_df.to_csv(tmp_download.name, index=False)
-
-                st.download_button(
-                    label="Download Opportunities CSV",
-                    data=open(tmp_download.name, "rb").read(),
-                    file_name="internal_linking_opportunities.csv",
-                    mime="text/csv"
-                )
