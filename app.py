@@ -1,114 +1,130 @@
-import httpx
-from bs4 import BeautifulSoup
-import pandas as pd
 import streamlit as st
-import re
-import asyncio
 import aiohttp
+import asyncio
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+import pandas as pd
+import re
+from collections import defaultdict
 
-# Fetch page content with headers
+# Function to fetch the content of the page
 async def fetch_page_content(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-    
     async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(url, headers=headers, timeout=20) as response:
-                if response.status == 200:
-                    return await response.text()
-                else:
-                    return f"Failed to fetch {url}: {response.status}"
-        except Exception as e:
-            return f"Error fetching {url}: {e}"
+        async with session.get(url) as response:
+            if response.status == 200:
+                html = await response.text()
+                return html
+            else:
+                return None
 
-# Extract internal links from a page
-def extract_internal_links(content, site_url):
-    soup = BeautifulSoup(content, 'html.parser')
-    links = []
-    
-    # Extract all links that are within the site (i.e., internal links)
-    for a_tag in soup.find_all('a', href=True):
-        href = a_tag['href']
-        if href.startswith('/') or href.startswith(site_url):
-            if site_url not in href:  # Fix any relative links or malformed links
-                href = site_url + href
-            links.append(href)
-    return set(links)
+# Function to extract internal links
+def extract_internal_links(base_url, html):
+    soup = BeautifulSoup(html, "html.parser")
+    links = set()
 
-# Extract main content excluding H1-H6, header, footer
-def extract_main_content(content):
-    soup = BeautifulSoup(content, 'html.parser')
-    
-    # Remove unwanted elements
-    for tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'footer']):
+    for anchor in soup.find_all('a', href=True):
+        href = anchor['href']
+        # Ensure the link is internal
+        if base_url in href:
+            full_url = urljoin(base_url, href)
+            links.add(full_url)
+
+    return links
+
+# Function to extract body content and exclude headers and footers
+def extract_body_content(html):
+    soup = BeautifulSoup(html, 'html.parser')
+
+    # Remove header, footer, and h1-h6 tags
+    for tag in soup.find_all(['header', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
         tag.decompose()
 
-    # Extract the remaining text
-    return ' '.join([p.text for p in soup.find_all('p')])
+    # Extract body content
+    body = soup.find('body')
+    return body.get_text(separator=' ', strip=True) if body else ""
 
-# Find internal link opportunities based on semantic similarity (simple keyword match for now)
-def find_link_opportunities(pages, target_url, target_keyword):
+# Function to find the suggested anchor text lines
+def find_suggested_anchor_lines(content, keyword):
+    lines = content.split('.')
+    relevant_lines = []
+    for line in lines:
+        if keyword.lower() in line.lower():
+            relevant_lines.append(line.strip())
+    return relevant_lines
+
+# Function to process CSV and find internal linking opportunities
+def process_file(file, target_url, seed_keyword):
+    # Read the CSV or Excel file into a DataFrame
+    if file.name.endswith('.csv'):
+        df = pd.read_csv(file)
+    elif file.name.endswith('.xlsx'):
+        df = pd.read_excel(file)
+    else:
+        return "Invalid file format. Please upload a CSV or Excel file."
+    
+    # Clean up and ensure 'URL' column exists
+    df = df.dropna(subset=['URL'])
+    base_url = target_url.rstrip('/').rsplit('/', 1)[0]  # Get base URL without trailing slash
+    
     opportunities = []
     
-    for url, content in pages.items():
-        if target_url in url:  # Skip the target URL itself
-            continue
-        if target_keyword.lower() in content.lower():
-            opportunities.append(url)
-    
+    # Loop through each URL in the file
+    for index, row in df.iterrows():
+        page_url = row['URL']
+        html = asyncio.run(fetch_page_content(page_url))
+
+        if html:
+            page_content = extract_body_content(html)
+            internal_links = extract_internal_links(base_url, html)
+
+            # Find lines that mention the seed keyword
+            suggested_lines = find_suggested_anchor_lines(page_content, seed_keyword)
+
+            # Check if the seed keyword is present in the page content and extract relevant anchor text suggestions
+            for line in suggested_lines:
+                if line:
+                    opportunities.append({
+                        'Page URL': page_url,
+                        'Suggested Anchor Text': seed_keyword,
+                        'Anchor Text Line': line,
+                        'Internal Links Found': internal_links
+                    })
+        else:
+            opportunities.append({
+                'Page URL': page_url,
+                'Suggested Anchor Text': seed_keyword,
+                'Anchor Text Line': 'Content not found or page inaccessible.',
+                'Internal Links Found': []
+            })
+
     return opportunities
 
-# Streamlit UI
-def main():
-    st.title("Internal Linking Opportunity Finder")
+# Streamlit interface
+st.title("Internal Linking Opportunity Finder")
 
-    # File Upload
-    uploaded_file = st.file_uploader("Upload CSV or Excel file with page URLs", type=["csv", "xlsx"])
+# File upload
+uploaded_file = st.file_uploader("Upload a CSV or Excel file containing URLs", type=["csv", "xlsx"])
 
-    if uploaded_file:
-        # Read the uploaded file into a pandas dataframe
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
+if uploaded_file:
+    # Input fields for Target URL and Seed Keyword
+    target_url = st.text_input("Enter Target URL (the page you want to create internal links for)")
+    seed_keyword = st.text_input("Enter Seed Keyword or Anchor Text")
+
+    if target_url and seed_keyword:
+        # Process the file and find internal linking opportunities
+        opportunities = process_file(uploaded_file, target_url, seed_keyword)
+
+        if opportunities:
+            # Display the internal linking opportunities
+            opportunities_df = pd.DataFrame(opportunities)
+            st.write(opportunities_df)
+
+            # Provide option to download the output as CSV
+            st.download_button(
+                label="Download Internal Linking Opportunities",
+                data=opportunities_df.to_csv(index=False),
+                file_name="internal_linking_opportunities.csv",
+                mime="text/csv"
+            )
         else:
-            df = pd.read_excel(uploaded_file)
-
-        st.write("URLs in the uploaded file:")
-        st.write(df)
-
-        # User inputs for target URL and keyword
-        target_url = st.text_input("Enter the target URL", "")
-        target_keyword = st.text_input("Enter the targeted keyword", "")
-
-        if st.button("Find Internal Linking Opportunities"):
-            if target_url and target_keyword:
-                pages = {}
-                # Fetch content for each URL
-                for url in df['URL']:
-                    st.write(f"Processing {url}...")
-                    content = asyncio.run(fetch_page_content(url))
-                    if "Failed" not in content:  # If the content was fetched successfully
-                        main_content = extract_main_content(content)
-                        pages[url] = main_content
-                    else:
-                        st.write(content)
-                
-                # Find internal linking opportunities
-                opportunities = find_link_opportunities(pages, target_url, target_keyword)
-                
-                st.write("Found the following internal linking opportunities:")
-                st.write(opportunities)
-                
-                # Download the list of opportunities as a CSV
-                opportunity_df = pd.DataFrame(opportunities, columns=["Internal Link Opportunities"])
-                st.download_button(
-                    label="Download Opportunities",
-                    data=opportunity_df.to_csv(index=False).encode('utf-8'),
-                    file_name="internal_link_opportunities.csv",
-                    mime="text/csv"
-                )
-
-if __name__ == "__main__":
-    main()
+            st.write("No internal linking opportunities found.")
