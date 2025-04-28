@@ -1,140 +1,125 @@
 import streamlit as st
 import pandas as pd
-import re
+import httpx
+from selectolax.parser import HTMLParser
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
-import time
+from urllib.parse import urlparse
+import re
+from tqdm import tqdm
 
-def fetch_rendered_html(url):
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=60000)  # 60 seconds
-            page.wait_for_load_state('networkidle')
-            content = page.content()
-            browser.close()
-            return content
-    except Exception as e:
-        print(f"Error fetching {url}: {e}")
-        return ""
+# Function to fetch page content
+async def fetch_content(url):
+    async with httpx.AsyncClient(timeout=20) as client:
+        try:
+            response = await client.get(url)
+            if response.status_code == 200:
+                return response.text
+        except Exception as e:
+            return None
+    return None
 
-def fetch_clean_text_from_rendered_html(html_content):
-    soup = BeautifulSoup(html_content, 'html.parser')
+# Function to clean body text (remove headers, footers, H1-H6)
+def extract_main_text(html):
+    tree = HTMLParser(html)
 
     # Remove unwanted sections
-    for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+    for tag in tree.css('header, footer, nav, h1, h2, h3, h4, h5, h6, script, style'):
         tag.decompose()
 
-    breadcrumb_classes = ['breadcrumb', 'breadcrumbs', 'woocommerce-breadcrumb']
-    for bc in breadcrumb_classes:
-        for tag in soup.find_all(class_=bc):
-            tag.decompose()
+    body = tree.css_first('body')
+    if body:
+        return body.text(separator="\n").strip()
+    return ""
 
-    paragraphs = []
-    for p in soup.find_all(['p', 'div', 'span']):
-        text = p.get_text(separator=' ', strip=True)
-        if text and len(text.split()) > 5:  # Ignore short blocks
-            paragraphs.append(text)
+# Function to check if keyword already exists
+def keyword_exists(html, keyword, target_url):
+    tree = HTMLParser(html)
+    for link in tree.css('a'):
+        href = link.attributes.get('href', '')
+        if target_url in href and keyword.lower() in link.text().lower():
+            return True
+    return False
 
-    return "\n".join(paragraphs)
+# Streamlit App
+st.title("🔗 Internal Linking Finder (Async Version)")
 
-def link_exists_in_html(html_content, target_url):
-    return target_url in html_content
+uploaded_file = st.file_uploader("Upload CSV or Excel with URLs", type=["csv", "xlsx"])
+target_url = st.text_input("Enter Target Page URL (where links should point)")
+seed_keyword = st.text_input("Enter Seed Keyword / Anchor Text")
 
-def find_matching_sentences(text, keyword):
-    sentences = re.split(r'(?<=[.!?]) +', text)
-    matches = []
-    for sentence in sentences:
-        if keyword.lower() in sentence.lower():
-            highlighted = re.sub(f"({re.escape(keyword)})", r"[\1]", sentence, flags=re.I)
-            matches.append(highlighted)
-    return matches
+if uploaded_file and target_url and seed_keyword:
+    # Read URLs
+    if uploaded_file.name.endswith('.csv'):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
 
-def main():
-    st.title("🔗 Internal Linking Tool — Pro Rendered Version")
+    urls = df.iloc[:, 0].dropna().tolist()
+    urls = list(set(urls))  # Remove duplicates
 
-    uploaded_file = st.file_uploader("Upload your Pages List (CSV or Excel)", type=["csv", "xlsx"])
-    target_url = st.text_input("Enter the Target URL:")
-    seed_keyword = st.text_input("Enter the Seed Keyword (Anchor Text):")
+    st.write(f"✅ {len(urls)} URLs loaded.")
 
-    if uploaded_file and target_url and seed_keyword:
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
+    import asyncio
 
-        if 'URL' not in df.columns:
-            st.error("The uploaded file must have a 'URL' column.")
+    async def process_urls():
+        target_html = await fetch_content(target_url)
+        if not target_html:
+            st.error("Failed to fetch target URL content.")
             return
+        
+        target_text = extract_main_text(target_html)
 
-        page_urls = df['URL'].tolist()
+        pages_data = []
+        texts = []
 
-        st.info(f"Crawling {len(page_urls)} pages... Please wait ⏳")
-
-        source_texts = []
-        valid_urls = []
-
-        for url in page_urls:
-            if url.strip() == target_url.strip():
-                continue  # Skip Target Page
-
-            html_content = fetch_rendered_html(url)
-            if not html_content:
+        for url in tqdm(urls):
+            if url == target_url:
+                continue
+            page_html = await fetch_content(url)
+            if not page_html:
                 continue
 
-            if link_exists_in_html(html_content, target_url):
-                continue  # Skip if link already exists
+            if keyword_exists(page_html, seed_keyword, target_url):
+                continue  # Skip if already linked
 
-            clean_text = fetch_clean_text_from_rendered_html(html_content)
-            if clean_text:
-                valid_urls.append(url)
-                source_texts.append(clean_text)
+            page_text = extract_main_text(page_html)
+            if len(page_text) > 50:  # Ignore very short pages
+                pages_data.append((url, page_text, page_html))
+                texts.append(page_text)
 
-        if not source_texts:
-            st.error("❌ No valid pages found for internal linking (after full rendering).")
+        if not pages_data:
+            st.error("❗ No valid pages found for internal linking.")
             return
 
-        st.success(f"Analyzing {len(valid_urls)} valid pages ✅")
+        # TF-IDF similarity
+        vectorizer = TfidfVectorizer(stop_words='english')
+        vectors = vectorizer.fit_transform([target_text] + texts)
+        cosine_similarities = cosine_similarity(vectors[0:1], vectors[1:]).flatten()
 
-        # Fetch target page
-        target_html = fetch_rendered_html(target_url)
-        target_text = fetch_clean_text_from_rendered_html(target_html)
-
-        # Semantic similarity
-        tfidf = TfidfVectorizer(stop_words='english')
-        vectors = tfidf.fit_transform([target_text] + source_texts)
-        similarities = cosine_similarity(vectors[0:1], vectors[1:]).flatten()
-
-        # Build results
+        # Rank pages
         results = []
-        for idx, score in enumerate(similarities):
-            if score > 0.25:
-                matched_sentences = find_matching_sentences(source_texts[idx], seed_keyword)
-                for match in matched_sentences:
+        for idx, (score, (url, text, html)) in enumerate(zip(cosine_similarities, pages_data)):
+            if score > 0.35:  # Adjust threshold
+                # Find suggested text snippet
+                sentences = text.split(".")
+                match = ""
+                for sentence in sentences:
+                    if seed_keyword.lower() in sentence.lower():
+                        match = sentence.strip()
+                        break
+
+                if match:
                     results.append({
-                        'Source Page': valid_urls[idx],
-                        'Matching Text (highlighted)': match.strip(),
-                        'Suggested Anchor Text': seed_keyword,
-                        'Link to Target Page': target_url,
-                        'Similarity Score': round(score, 3)
+                        "Source Page": url,
+                        "Suggested Sentence for Link": match,
+                        "Similarity Score": round(score, 3)
                     })
 
         if results:
             output_df = pd.DataFrame(results)
             st.dataframe(output_df)
 
-            csv = output_df.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="Download Internal Link Suggestions CSV",
-                data=csv,
-                file_name="internal_link_suggestions.csv",
-                mime="text/csv"
-            )
-        else:
-            st.warning("No strong internal linking opportunities found.")
-
-if __name__ == "__main__":
-    main()
+                label="📥 Download Results as CSV",
+                data=output_df.to_csv(index=False),
