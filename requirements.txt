@@ -1,7 +1,5 @@
 streamlit
 pandas
-beautifulsoup4
-lxml
+httpx
+selectolax
 scikit-learn
-playwright
-requests-html
