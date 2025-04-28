@@ -1,49 +1,44 @@
-import asyncio
+from requests_html import AsyncHTMLSession
 import streamlit as st
 import pandas as pd
 import re
-from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import tempfile
 import time
+import asyncio
 
 # ========== Helper Functions ==========
 
 async def fetch_page_content(url):
-    async with async_playwright() as p:
-        browser = await p.chromium.launch()
-        page = await browser.new_page()
-        try:
-            await page.goto(url, timeout=60000)
-            content = await page.content()
-        except Exception as e:
-            print(f"Failed to load {url}: {e}")
-            content = ""
-        await browser.close()
-        return content
+    session = AsyncHTMLSession()
+    try:
+        response = await session.get(url)
+        await response.html.arender(timeout=20, sleep=2)
+        content = response.html.html
+    except Exception as e:
+        print(f"Failed to load {url}: {e}")
+        content = ""
+    await session.close()
+    return content
 
 def extract_clean_content(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
 
-    # Remove header, footer, nav, sidebar, breadcrumbs
     for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'form']):
         tag.decompose()
     for div in soup.find_all('div', class_=re.compile(r"breadcrumb", re.I)):
         div.decompose()
-
-    # Remove headings
     for tag in soup.find_all(re.compile('^h[1-6]$')):
         tag.decompose()
 
-    # Extract meaningful text
     paragraphs = soup.find_all('p')
     text = ' '.join(p.get_text(separator=' ', strip=True) for p in paragraphs)
 
     return text.strip()
 
-def highlight_anchor(text, keyword):
+def highlight_anchor(text, keyword, target_url):
     pattern = re.compile(rf"(.{{0,50}})({re.escape(keyword)})(.{{0,50}})", re.IGNORECASE)
     matches = pattern.findall(text)
     highlighted = []
@@ -114,7 +109,7 @@ if uploaded_file and target_url and seed_keyword:
                     if re.search(rf'href=["\'].*?{re.escape(target_url)}.*?["\']', text):
                         continue
 
-                    anchors = highlight_anchor(text, seed_keyword)
+                    anchors = highlight_anchor(text, seed_keyword, target_url)
                     if anchors:
                         results.append({
                             'Page URL': url,
