@@ -90,7 +90,7 @@ async def process_pages(page_urls, target_url, keyword):
 
         return opportunities
 
-st.title(✨"Internal Linking Opportunity Finder")
+st.title("Internal Linking Opportunity Finder")
 st.markdown("This tool finds content sections from other pages that can internally link to your target page.")
 
 uploaded_file = st.file_uploader("Upload CSV/Excel with Page URLs", type=["csv", "xlsx"])
