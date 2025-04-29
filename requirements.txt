@@ -1,9 +1,6 @@
-streamlit
-pandas
-httpx
-selectolax
-scikit-learn
+streamlit>=1.33.0
 aiohttp
 beautifulsoup4
-openpyxl
-
+pandas
+scikit-learn
+tqdm
