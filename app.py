@@ -3,13 +3,16 @@ import aiohttp
 import asyncio
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 }
+
+# Initialize Sentence-Transformer model
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
 async def fetch_html(session, url):
     try:
@@ -47,9 +50,11 @@ def find_link_opportunities(pages_content, target_content, keyword):
     if not pages_content:
         return []  # Return an empty list if there's nothing to compare
 
-    vectorizer = TfidfVectorizer().fit([target_content] + pages_content)
-    tfidf_matrix = vectorizer.transform([target_content] + pages_content)
-    similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
+    # Encode target content and pages using sentence embeddings
+    target_embedding = model.encode([target_content])
+    page_embeddings = model.encode(pages_content)
+
+    similarities = cosine_similarity(target_embedding, page_embeddings).flatten()
 
     opportunities = []
     for idx, score in enumerate(similarities):
