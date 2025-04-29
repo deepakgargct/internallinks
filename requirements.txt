@@ -5,6 +5,6 @@ scikit-learn
 pandas
 numpy
 requests
-sentence-transformers==2.2.2
-huggingface_hub==0.10.1  # 👈 compatible with sentence-transformers 2.2.2
-torch==1.13.1             # Ensure compatibility with your model
+sentence-transformers==2.6.1
+huggingface_hub==0.20.3
+torch==2.2.2
