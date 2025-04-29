@@ -8,3 +8,4 @@ requests
 sentence-transformers==2.6.1
 huggingface_hub==0.20.3
 torch==2.2.2
+openpyxl
