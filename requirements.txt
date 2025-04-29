@@ -5,3 +5,4 @@ selectolax
 scikit-learn
 aiohttp
 beautifulsoup4
+openpyxl
