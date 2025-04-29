@@ -4,3 +4,4 @@ httpx
 selectolax
 scikit-learn
 aiohttp
+beautifulsoup4
