@@ -1,6 +1,8 @@
-aiohttp==3.8.1
-beautifulsoup4==4.11.1
-pandas==1.4.2
-sentence-transformers==2.2.0
-scikit-learn==1.1.2
-streamlit==1.13.0
+streamlit==1.33.0
+aiohttp
+beautifulsoup4
+scikit-learn
+pandas
+numpy
+requests
+sentence-transformers==2.2.2
