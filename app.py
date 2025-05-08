@@ -2,7 +2,6 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-from readability import Document
 import spacy
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -17,6 +16,14 @@ target_url = st.text_input("Enter your target page URL (e.g., https://example.co
 
 submitted = st.button("Analyze Website")
 
+def get_main_content(html):
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in ['header', 'footer', 'nav', 'aside', 'script', 'style']:
+        for element in soup.find_all(tag):
+            element.decompose()
+    body = soup.find('body')
+    return str(body) if body else str(soup)
+
 def get_internal_links(base_url):
     visited = set()
     to_visit = [base_url]
@@ -30,14 +37,10 @@ def get_internal_links(base_url):
 
         try:
             response = requests.get(url, timeout=10)
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            # Save main content using readability
-            doc = Document(response.text)
-            cleaned_html = doc.summary()
+            cleaned_html = get_main_content(response.text)
             internal_links.append((url, cleaned_html))
 
-            # Find new internal URLs to visit
+            soup = BeautifulSoup(response.text, "html.parser")
             for a_tag in soup.find_all("a", href=True):
                 href = urljoin(url, a_tag['href'])
                 if base_url in href and href not in visited:
@@ -75,6 +78,9 @@ def find_recommendations(pages, target_url):
             continue
 
         sentences = extract_sentences(html_content)
+        if not sentences:
+            continue
+
         scores = cosine_similarity(vectorizer.transform(sentences), vectorizer.transform([target_keyword])).flatten()
         ranked_sentences = sorted(zip(sentences, scores), key=lambda x: -x[1])
 
