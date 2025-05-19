@@ -4,8 +4,12 @@ import requests
 import nltk
 from bs4 import BeautifulSoup
 
-# Download required NLTK data (only once)
-nltk.download("punkt")
+# Ensure the required NLTK data is available.
+# This block checks if "punkt" exists and, if not, downloads it.
+try:
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    nltk.download("punkt", quiet=True)
 
 def normalize_url(url):
     """Normalize URL strings for reliable comparison."""
