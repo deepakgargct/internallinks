@@ -1,8 +1,5 @@
 streamlit
-requests
-beautifulsoup4
-lxml
-readability-lxml
-rake-nltk
 pandas
-openpyxl
+requests
+nltk
+beautifulsoup4
