@@ -13,15 +13,11 @@ def normalize_url(url):
 
 def fetch_content(url):
     """
-    Fetch page content using requests with a custom User-Agent header.
-    This generally helps avoid HTTP 403 errors.
+    Fetch page content using requests with a Google Bot User-Agent header.
+    This helps bypass HTTP 403 errors from servers that allow Googlebot access.
     """
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/90.0.4430.85 Safari/537.36"
-        )
+        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -55,7 +51,7 @@ def find_internal_link_opportunities(page_url, page_text, target_list):
       target_list (list): List of dictionaries with keys 'target_url' and 'keyword'.
       
     Returns:
-      list: A list of dictionaries where each dictionary represents an linking opportunity.
+      list: A list of dictionaries where each dictionary represents a linking opportunity.
     """
     opportunities = []
     paragraphs = extract_paragraphs(page_text)
